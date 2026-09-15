@@ -1,0 +1,6 @@
+dataset,operation,source,matching_key,missing_before,values_recovered,missing_after
+Price,District recovery,Mandi Master,mandi_id,271.0,0.0,271.0
+Price,MSP validation,Previous cleaning stage,crop_name + date,30.0,0.0,30.0
+Arrivals,Master enrichment,Mandi Master,mandi_id,,,
+Transport,Master enrichment,Mandi Master,mandi_id,,,
+Weather,Sensor validation,No cross-dataset source,None,,0.0,

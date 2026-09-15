@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Mandi Chatbot — Agentic Graph AI</title>
+  <meta name="description" content="AI Mandi Chatbot powered by Gemini 3.8 Flash and deterministic Pandas analysis engine with interactive charts.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Chart.js for smooth interactive charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo-mark">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h2>Mandi Intelligence</h2>
+          <span class="version-tag">Agentic Graph AI</span>
+        </div>
+      </div>
+
+      <div class="pipeline-card">
+        <div class="pipeline-title">Golden Rule Architecture</div>
+        <div class="pipeline-steps">
+          <div class="step-badge"><span class="dot pulse"></span> <strong>Gemini</strong> Understand</div>
+          <div class="step-arrow">↓</div>
+          <div class="step-badge"><span class="dot"></span> <strong>Backend</strong> Validate</div>
+          <div class="step-arrow">↓</div>
+          <div class="step-badge"><span class="dot"></span> <strong>Pandas</strong> Calculate</div>
+          <div class="step-arrow">↓</div>
+          <div class="step-badge"><span class="dot"></span> <strong>Engine</strong> Visualize</div>
+          <div class="step-arrow">↓</div>
+          <div class="step-badge"><span class="dot"></span> <strong>Gemini</strong> Explain</div>
+        </div>
+      </div>
+
+      <!-- Dataset Metadata Stats -->
+      <div class="meta-section">
+        <div class="section-label">DATASET SCOPE (2026-01-01 → 2026-09-09)</div>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-num" id="stat-mandis">57</div>
+            <div class="stat-desc">Mandis</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="stat-crops">7</div>
+            <div class="stat-desc">Crops</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="stat-arrivals">23.7k</div>
+            <div class="stat-desc">Arrivals</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-num" id="stat-prices">12.0k</div>
+            <div class="stat-desc">Prices</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Suggested Queries targeting Bonus criteria -->
+      <div class="preset-section">
+        <div class="section-label">BONUS DEMONSTRATIONS</div>
+        <div class="preset-list" id="preset-list">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="model-badge">
+          <span class="model-indicator"></span>
+          <span>Model: <strong>gemini-3.8-flash</strong></span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Container -->
+    <main class="main-content">
+      <!-- Top Navigation -->
+      <header class="top-nav">
+        <div class="nav-left">
+          <button class="menu-toggle" id="menu-toggle" aria-label="Toggle Menu">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+          <div class="header-title">
+            <h1>Agricultural Market & Analytics Assistant</h1>
+            <p>Grounded in verified historical mandi, weather & logistics datasets</p>
+          </div>
+        </div>
+
+        <div class="nav-right">
+          <div class="status-pill">
+            <span class="pulse-dot"></span>
+            <span>Deterministic Pandas Engine Active</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Chat Thread -->
+      <section class="chat-thread" id="chat-thread">
+        <div class="welcome-card" id="welcome-card">
+          <div class="welcome-badge">MANDI CONTRACT COMPLIANT</div>
+          <h2>Ask natural-language questions about arrivals, crop prices, MSP, logistics & weather.</h2>
+          <p>
+            Numerical results are never hallucinated or estimated by the LLM. Every figure is deterministically calculated by the backend Pandas engine and visualized with interactive charts.
+          </p>
+          <div class="quick-chips" id="quick-chips">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Input Area -->
+      <footer class="input-container">
+        <form class="chat-form" id="chat-form" action="javascript:void(0);" onsubmit="return false;">
+          <div class="input-wrapper">
+            <input
+              type="text"
+              id="user-input"
+              class="chat-input"
+              placeholder="Ask anything (e.g. 'Which 5 mandis had the highest wheat arrivals?' or 'Did rainfall affect wheat arrivals?')..."
+              autocomplete="off"
+            />
+            <button type="submit" id="send-btn" class="send-btn" aria-label="Send Query">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+        </form>
+      </footer>
+    </main>
+  </div>
+
+  <script src="src/chart_renderer.js"></script>
+  <script src="src/app.js"></script>
+</body>
+</html>
