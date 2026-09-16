@@ -142,8 +142,6 @@ ALLOWED_AGGREGATIONS = {
 HIGH_ARRIVAL_PERCENTILE = 0.75
 LOW_PRICE_PERCENTILE = 0.25
 
-# LLM Model Configuration
-GEMINI_MODEL_ID = "gemini-2.5-flash"
-FALLBACK_GEMINI_MODEL_ID = "gemini-2.5-flash"
-GROQ_MODEL_ID = "openai/gpt-oss-120b"
-FALLBACK_GROQ_MODEL_ID = "openai/gpt-oss-20b"
+# LLM Model Configuration (Google Gemini via AI Studio)
+GEMINI_MODEL_ID = "gemini-3.1-flash-lite"
+FALLBACK_GEMINI_MODEL_ID = "gemini-3.5-flash"

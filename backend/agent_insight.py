@@ -2,7 +2,7 @@ import os
 import logging
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
-from .config import GEMINI_MODEL_ID, GROQ_MODEL_ID
+from .config import GEMINI_MODEL_ID, FALLBACK_GEMINI_MODEL_ID
 
 load_dotenv()
 logger = logging.getLogger("mandi_chatbot.agent_insight")
@@ -15,90 +15,113 @@ class InsightAgent:
     """
 
     def __init__(self):
-        # 1. Initialize Groq client
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.groq_client = None
-        if self.groq_api_key:
-            try:
-                from groq import Groq
-                self.groq_client = Groq(api_key=self.groq_api_key)
-                logger.info("Initialized Groq client in InsightAgent.")
-            except Exception as e:
-                logger.warning(f"Could not initialize Groq client in InsightAgent: {e}")
-
-        # 2. Initialize Gemini client
         self.api_key = os.getenv("GEMINI_API_KEY")
-        self.gemini_client = None
+        self.client = None
         if self.api_key:
             try:
                 from google import genai
-                self.gemini_client = genai.Client(api_key=self.api_key)
+                self.client = genai.Client(api_key=self.api_key)
+                logger.info("Gemini client initialized for InsightAgent.")
             except Exception as e:
-                logger.warning(f"Could not initialize google-genai client in InsightAgent: {e}")
+                logger.warning(f"Could not initialize Gemini client in InsightAgent: {e}")
+        else:
+            logger.warning("GEMINI_API_KEY not set. InsightAgent will use deterministic summaries only.")
+
+    def _call_gemini(self, prompt: str, max_tokens: int = 500, json_mode: bool = False) -> Optional[str]:
+        """Calls Gemini for plain text insight. Tries primary then fallback. Returns text or None."""
+        if not self.client:
+            return None
+        for model in [GEMINI_MODEL_ID, FALLBACK_GEMINI_MODEL_ID]:
+            try:
+                from google.genai import types as genai_types
+                config = genai_types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=max_tokens,
+                    response_mime_type="application/json" if json_mode else "text/plain",
+                )
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=config,
+                )
+                text = response.text.strip() if response and response.text else None
+                if text:
+                    return text
+            except Exception as e:
+                logger.warning(f"InsightAgent Gemini call failed for model {model}: {e}")
+        return None
 
     def generate_summary_and_answer(self, intent: Dict[str, Any], engine_result: Dict[str, Any], chart_spec: Optional[Dict[str, Any]]) -> Dict[str, str]:
         """
         Returns {"answer": "...", "summary": "..."}
         """
-        # If unsupported intent
         if intent.get("intent") == "unsupported":
             msg = intent.get("unsupported_reason", "This query cannot be answered with historical mandi data.")
             return {"answer": msg, "summary": msg}
 
-        # Deterministic summary generation first
+        # Always compute deterministic summary first — grounded in Pandas output
         deterministic_res = self._deterministic_summary(intent, engine_result, chart_spec)
 
+        # Detect if user wants a deep/detailed explanation
+        user_query = intent.get("_user_query", "")
+        deep_mode = intent.get("_deep_mode", False)
+        history = intent.get("_history", [])
+
+        # Build history context for the prompt
+        history_context = ""
+        if history:
+            last_pairs = history[-4:]  # last 2 turns
+            lines = []
+            for m in last_pairs:
+                role = "User" if m.get("role") == "user" else "Assistant"
+                content = m.get("content", "")[:300]  # truncate long summaries
+                lines.append(f"{role}: {content}")
+            history_context = "\n\nRecent conversation:\n" + "\n".join(lines)
+
+        sentence_count = "6-8" if deep_mode else "3-5"
+        max_tokens = 900 if deep_mode else 500
+
         prompt = f"""You are the Insight Agent in the AI Mandi Chatbot.
-Your task is to write a concise 1-2 sentence AI Summary of the calculated results.
+You must return a JSON object with two fields: "answer" and "summary".
 
 STRICT CONTRACT RULES:
 1. Ground every statement in the numbers provided below. Do not guess or modify numbers.
-2. If this is a correlation query, you must report correlation and NEVER claim causation (e.g. state 'showed a correlation of X. This indicates a relationship but does not establish causation').
-3. Keep the summary professional, clear, and focused on key findings.
+2. If this is a correlation query, NEVER claim causation — only state correlation.
+3. Include specific numbers, mandi names, crop names, and date ranges where available.
+4. Write in a professional but conversational tone.
+5. End the summary with one practical observation or takeaway for a farmer or market analyst.
+6. Use the recent conversation context to make the response feel connected and continuous.{' Write a thorough deep-dive since the user asked for depth.' if deep_mode else ''}
+
+FIELD INSTRUCTIONS:
+- "answer": Write 2-3 sentences. Strong, informative heading shown above the chart. Directly answer the user question with the key finding and top numbers.
+- "summary": Write {sentence_count} sentences (~{max_tokens // 5} words). Detailed analysis shown below the chart. Explain patterns, comparisons, what numbers mean, and why it matters.{' Since user asked for depth: expand on seasonal effects, supply-demand dynamics, and give actionable insights.' if deep_mode else ''}
 
 User Intent: {intent.get('intent')}
 Calculated Findings: {deterministic_res['summary']}
-Engine Result Data: {engine_result.get('records', [])[:5]}
+Engine Result Data: {engine_result.get('records', [])[:8]}{history_context}
 
-Generate a crisp 1-2 sentence summary:"""
+Return ONLY a JSON object like: {{"answer": "...", "summary": "..."}}"""
 
-        # 1. Try Groq (Ultra-fast, high rate limits)
-        if self.groq_client:
+        ai_result = self._call_gemini(prompt, max_tokens=max_tokens, json_mode=True)
+
+        if ai_result:
             try:
-                completion = self.groq_client.chat.completions.create(
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ],
-                    model=GROQ_MODEL_ID,
-                    temperature=0.2,
-                    max_tokens=200
-                )
-                groq_text = completion.choices[0].message.content.strip()
-                if groq_text:
-                    return {
-                        "answer": deterministic_res["answer"],
-                        "summary": groq_text
-                    }
-            except Exception as e:
-                logger.warning(f"Insight Agent Groq generation fallback: {e}")
+                import json, re
+                # Strip markdown fences if present
+                cleaned = re.sub(r"^```[a-z]*\n?", "", ai_result)
+                cleaned = re.sub(r"\n?```$", "", cleaned).strip()
+                parsed = json.loads(cleaned)
+                return {
+                    "answer": parsed.get("answer") or deterministic_res["answer"],
+                    "summary": parsed.get("summary") or deterministic_res["summary"]
+                }
+            except Exception:
+                pass
 
-        # 2. Try Gemini
-        if self.gemini_client:
-            try:
-                resp = self.gemini_client.models.generate_content(
-                    model=GEMINI_MODEL_ID,
-                    contents=prompt
-                )
-                gemini_text = resp.text.strip()
-                if gemini_text:
-                    return {
-                        "answer": deterministic_res["answer"],
-                        "summary": gemini_text
-                    }
-            except Exception as e:
-                logger.warning(f"Insight Agent Gemini generation fallback: {e}")
-
-        return deterministic_res
+        return {
+            "answer": deterministic_res["answer"],
+            "summary": ai_result if ai_result else deterministic_res["summary"]
+        }
 
     def _deterministic_summary(self, intent: Dict[str, Any], engine_result: Dict[str, Any], chart_spec: Optional[Dict[str, Any]]) -> Dict[str, str]:
         intent_type = intent.get("intent", "lookup")

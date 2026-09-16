@@ -38,8 +38,11 @@ analysis_engine = PandasAnalysisEngine()
 chart_agent = ChartSelectionAgent()
 insight_agent = InsightAgent()
 
+from typing import Dict, Any, Optional, List
+
 class ChatRequest(BaseModel):
     query: str
+    history: Optional[List[Dict[str, str]]] = []
 
 @app.get("/api/health")
 def health_check():
@@ -116,13 +119,62 @@ def process_chat(req: ChatRequest):
 
     logger.info(f"Processing query: '{user_query}'")
 
-    # Step 1: Question Understanding (Gemini 3.8 Flash)
-    raw_intent = understanding_agent.understand(user_query)
+    # Detect depth/elaboration preference from query
+    ELABORATION_TRIGGERS = [
+        "in depth", "in-depth", "deeply", "elaborate", "more detail",
+        "detailed", "explain more", "tell me more", "deep explanation",
+        "full analysis", "complete analysis", "insights", "summarization",
+        "break it down", "deep review", "detailed review", "elongate",
+        "expand", "more", "longer", "bigger", "larger", "extend",
+        "can you more", "tell me more", "give me more", "more about",
+    ]
+    q_lower_check = user_query.lower()
+    deep_mode = any(t in q_lower_check for t in ELABORATION_TRIGGERS)
+
+    # Step 1: Question Understanding (Gemini)
+    raw_intent = understanding_agent.understand(user_query, history=req.history or [])
     logger.info(f"Structured intent extracted: {raw_intent}")
 
     # Handle explicitly unsupported or clarification queries (e.g. greetings, general questions)
     if raw_intent.get("intent") in ["unsupported", "clarification"]:
         is_clarification = raw_intent.get("intent") == "clarification"
+
+        # If clarification + history + looks like a follow-up → elaborate on previous answer
+        if is_clarification and deep_mode and req.history:
+            last_bot = next(
+                (m["content"] for m in reversed(req.history) if m.get("role") == "assistant"),
+                None
+            )
+            if last_bot:
+                logger.info("Follow-up elaboration detected — expanding previous answer from history.")
+                deep_prompt = f"""You are the Insight Agent in the AI Mandi Chatbot.
+The user wants a longer, more detailed version of the previous analysis.
+
+Previous analysis:
+{last_bot}
+
+User request: "{user_query}"
+
+Write a thorough 6-8 sentence expanded analysis that:
+1. Repeats and expands on the key numbers in more depth
+2. Explains possible real-world reasons behind the patterns (seasonal effects, supply-demand)
+3. Highlights outliers or notable comparisons
+4. Gives actionable insights for farmers and market analysts
+5. Uses only numbers already mentioned — do not invent new figures
+
+Write in a professional, informative tone:"""
+                deep_summary = insight_agent._call_gemini(deep_prompt, max_tokens=900)
+                answer = "Here is an expanded analysis based on the previous result."
+                return {
+                    "answer": answer,
+                    "summary": deep_summary or last_bot,
+                    "data": [],
+                    "chart": None,
+                    "filters_applied": {},
+                    "data_range": {"start": DATASET_START_DATE, "end": DATASET_END_DATE},
+                    "clarification_required": False,
+                }
+
         default_msg = (
             "Hello! I am your AI Mandi Intelligence Assistant. You can ask me about crop arrivals, modal prices, ranking mandis, trends over time, logistics, and weather correlations (e.g. 'Which 5 mandis had the highest wheat arrivals?' or 'Show wheat prices from January to September')."
             if is_clarification else
@@ -166,7 +218,10 @@ def process_chat(req: ChatRequest):
     # Step 4: Chart Selection Agent
     chart_spec = chart_agent.select_and_build_spec(validated_intent, engine_result)
 
-    # Step 5: Insight Agent (Text Summary & Direct Answer)
+    # Step 5: Insight Agent — inject original query and deep mode flag
+    validated_intent["_user_query"] = user_query
+    validated_intent["_deep_mode"] = deep_mode
+    validated_intent["_history"] = req.history or []
     explanations = insight_agent.generate_summary_and_answer(validated_intent, engine_result, chart_spec)
 
     # Build Section 38 standard response object
