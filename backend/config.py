@@ -143,7 +143,7 @@ HIGH_ARRIVAL_PERCENTILE = 0.75
 LOW_PRICE_PERCENTILE = 0.25
 
 # LLM Model Configuration
-GEMINI_MODEL_ID = "gemini-2.5-flash"
-FALLBACK_GEMINI_MODEL_ID = "gemini-2.5-flash"
-GROQ_MODEL_ID = "openai/gpt-oss-120b"
-FALLBACK_GROQ_MODEL_ID = "openai/gpt-oss-20b"
+GEMINI_MODEL_ID = "gemini-3.6-flash"
+FALLBACK_GEMINI_MODEL_ID = "gemini-3.6-flash"
+GROQ_MODEL_ID = "groq/compound"
+FALLBACK_GROQ_MODEL_ID = "groq/compound-mini"
