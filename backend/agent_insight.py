@@ -71,7 +71,8 @@ Generate a crisp 1-2 sentence summary:"""
                     ],
                     model=GROQ_MODEL_ID,
                     temperature=0.2,
-                    max_tokens=200
+                    max_tokens=200,
+                    timeout=15,
                 )
                 groq_text = completion.choices[0].message.content.strip()
                 if groq_text:
@@ -82,12 +83,13 @@ Generate a crisp 1-2 sentence summary:"""
             except Exception as e:
                 logger.warning(f"Insight Agent Groq generation fallback: {e}")
 
-        # 2. Try Gemini
+        # 2. Try Gemini (with timeout to prevent hanging)
         if self.gemini_client:
             try:
                 resp = self.gemini_client.models.generate_content(
                     model=GEMINI_MODEL_ID,
-                    contents=prompt
+                    contents=prompt,
+                    config={"timeout": 10}
                 )
                 gemini_text = resp.text.strip()
                 if gemini_text:
