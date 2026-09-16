@@ -108,7 +108,6 @@ class QuestionUnderstandingAgent:
                     model=GROQ_MODEL_ID,
                     response_format={"type": "json_object"},
                     temperature=0.1,
-                    timeout=15,
                 )
                 text = chat_completion.choices[0].message.content.strip()
                 if text:
@@ -118,21 +117,13 @@ class QuestionUnderstandingAgent:
             except Exception as e:
                 logger.warning(f"Groq API call failed ({e}), falling back to next provider.")
 
-        # 2. Try Gemini (with timeout to prevent hanging)
+        # 2. Try Gemini
         if self.gemini_client:
             try:
-                import signal
-
-                def _timeout_handler(signum, frame):
-                    raise TimeoutError("Gemini request timed out")
-
                 response = self.gemini_client.models.generate_content(
                     model=GEMINI_MODEL_ID,
                     contents=f"{SYSTEM_PROMPT}\n\nUser Question:\n{user_question}",
-                    config={
-                        "response_mime_type": "application/json",
-                        "timeout": 10,
-                    }
+                    config={"response_mime_type": "application/json"}
                 )
                 if response and getattr(response, "text", None):
                     text = response.text.strip()
