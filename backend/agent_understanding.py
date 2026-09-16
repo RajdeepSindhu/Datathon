@@ -13,7 +13,7 @@ from .config import (
     DATASET_START_DATE,
     DATASET_END_DATE,
     GEMINI_MODEL_ID,
-    GROQ_MODEL_ID
+    FALLBACK_GEMINI_MODEL_ID,
 )
 from .date_resolver import resolve_date_range
 
@@ -70,71 +70,87 @@ Guidelines:
 
 class QuestionUnderstandingAgent:
     def __init__(self):
-        # 1. Initialize Groq client if key is available
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.groq_client = None
-        if self.groq_api_key:
-            try:
-                from groq import Groq
-                self.groq_client = Groq(api_key=self.groq_api_key)
-                logger.info("Initialized Groq client for QuestionUnderstandingAgent.")
-            except Exception as e:
-                logger.warning(f"Could not initialize Groq client: {e}")
-
-        # 2. Initialize Gemini client if key is available
         self.api_key = os.getenv("GEMINI_API_KEY")
-        self.gemini_client = None
+        self.client = None
         if self.api_key:
             try:
                 from google import genai
-                self.gemini_client = genai.Client(api_key=self.api_key)
-                logger.info("Initialized Google GenAI client.")
+                self.client = genai.Client(api_key=self.api_key)
+                logger.info("Gemini client initialized for QuestionUnderstandingAgent.")
             except Exception as e:
-                logger.warning(f"Could not initialize google-genai client: {e}")
+                logger.warning(f"Could not initialize Gemini client: {e}")
+        else:
+            logger.warning("GEMINI_API_KEY not set. Will use heuristic parser only.")
 
-    def understand(self, user_question: str) -> Dict[str, Any]:
+    def _call_gemini(self, model: str, prompt: str) -> Optional[str]:
+        """Calls Gemini with JSON output mode. Returns text or None."""
+        if not self.client:
+            return None
+        try:
+            from google.genai import types as genai_types
+            response = self.client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                    max_output_tokens=512,
+                )
+            )
+            text = response.text.strip() if response and response.text else None
+            if text:
+                # Strip markdown code fences if model wraps JSON in them
+                if text.startswith("```"):
+                    text = re.sub(r"^```[a-z]*\n?", "", text)
+                    text = re.sub(r"\n?```$", "", text).strip()
+                # Fix trailing commas before } or ] (common LLM mistake)
+                text = re.sub(r",\s*([}\]])", r"\1", text)
+                logger.info(f"[Gemini:{model}] Response length: {len(text)} chars")
+            return text
+        except Exception as e:
+            logger.warning(f"Gemini call failed for model {model}: {e}")
+            return None
+
+    def understand(self, user_question: str, history: list = []) -> Dict[str, Any]:
         """
         Parses user question into structured intent JSON.
-        Priority: Groq -> Gemini -> Deterministic heuristic parser.
+        history: list of {"role": "user"|"assistant", "content": "..."} dicts (last N turns).
+        Priority: Gemini primary -> Gemini fallback -> Heuristic parser.
         """
-        # 1. Try Groq (Fastest response, generous 30 RPM limit)
-        if self.groq_client:
-            try:
-                chat_completion = self.groq_client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": f"User Question:\n{user_question}"}
-                    ],
-                    model=GROQ_MODEL_ID,
-                    response_format={"type": "json_object"},
-                    temperature=0.1,
-                )
-                text = chat_completion.choices[0].message.content.strip()
-                if text:
-                    intent_json = json.loads(text)
-                    self._enrich_dates(user_question, intent_json)
-                    return intent_json
-            except Exception as e:
-                logger.warning(f"Groq API call failed ({e}), falling back to next provider.")
+        # Build conversation context string from history
+        history_text = ""
+        if history:
+            history_lines = []
+            for msg in history[-6:]:  # last 3 turns (6 messages)
+                role = "User" if msg.get("role") == "user" else "Assistant"
+                history_lines.append(f"{role}: {msg.get('content', '')}")
+            history_text = "\n\nPrevious conversation:\n" + "\n".join(history_lines) + "\n"
 
-        # 2. Try Gemini
-        if self.gemini_client:
-            try:
-                response = self.gemini_client.models.generate_content(
-                    model=GEMINI_MODEL_ID,
-                    contents=f"{SYSTEM_PROMPT}\n\nUser Question:\n{user_question}",
-                    config={"response_mime_type": "application/json"}
-                )
-                if response and getattr(response, "text", None):
-                    text = response.text.strip()
-                    if text:
-                        intent_json = json.loads(text)
-                        self._enrich_dates(user_question, intent_json)
-                        return intent_json
-            except Exception as e:
-                logger.warning(f"Gemini API call failed ({e}), falling back to built-in semantic parser.")
+        prompt = f"{SYSTEM_PROMPT}{history_text}\nUser Question:\n{user_question}"
+        logger.info(f"[Gemini] Sending query to model | prompt chars: {len(prompt)} | history turns: {len(history)}")
 
-        # 3. Deterministic rule-based heuristic parser
+        # 1. Try primary model
+        text = self._call_gemini(GEMINI_MODEL_ID, prompt)
+        if text:
+            try:
+                intent_json = json.loads(text)
+                self._enrich_dates(user_question, intent_json)
+                return intent_json
+            except json.JSONDecodeError as e:
+                logger.warning(f"Primary model returned invalid JSON: {e}")
+
+        # 2. Try fallback model
+        text = self._call_gemini(FALLBACK_GEMINI_MODEL_ID, prompt)
+        if text:
+            try:
+                intent_json = json.loads(text)
+                self._enrich_dates(user_question, intent_json)
+                return intent_json
+            except json.JSONDecodeError as e:
+                logger.warning(f"Fallback model returned invalid JSON: {e}")
+
+        # 3. Deterministic heuristic parser
+        logger.info("Using heuristic parser for question understanding.")
         return self._heuristic_parse(user_question)
 
     def _enrich_dates(self, user_question: str, intent_json: Dict[str, Any]):
@@ -356,19 +372,30 @@ class QuestionUnderstandingAgent:
 
         # 12. Single value / Aggregation / Lookup (Section 16 #1, #2)
         # "What is the wheat price?", "What was the average wheat price?"
-        ds = "prices" if any(w in q_lower for w in ["price", "rate", "cost", "selling"]) else "arrivals"
-        metric = "modal_price" if ds == "prices" else "arrival_quantity_qtl"
-        if "minimum" in q_lower or "min" in q_lower:
-            metric = "min_price"
-        elif "maximum" in q_lower or "max" in q_lower:
-            metric = "max_price"
+        if any(w in q_lower for w in ["price", "rate", "cost", "selling", "arrival", "how much", "average", "total"]):
+            ds = "prices" if any(w in q_lower for w in ["price", "rate", "cost", "selling"]) else "arrivals"
+            metric = "modal_price" if ds == "prices" else "arrival_quantity_qtl"
+            if "minimum" in q_lower or "min" in q_lower:
+                metric = "min_price"
+            elif "maximum" in q_lower or "max" in q_lower:
+                metric = "max_price"
 
+            return {
+                "intent": "aggregation",
+                "datasets": [ds],
+                "metric": metric,
+                "aggregation": "average" if ("average" in q_lower or "avg" in q_lower) else ("sum" if ds == "arrivals" else "average"),
+                "filters": {"crop_name": crop or "Wheat", "mandi_name": mandi, "date_start": d_start, "date_end": d_end},
+                "chart_required": True,
+                "chart_type": "kpi"
+            }
+
+        # 13. Fallback — unclear or conversational input
         return {
-            "intent": "aggregation",
-            "datasets": [ds],
-            "metric": metric,
-            "aggregation": "average" if ("average" in q_lower or "avg" in q_lower) else ("sum" if ds == "arrivals" else "average"),
-            "filters": {"crop_name": crop or "Wheat", "mandi_name": mandi, "date_start": d_start, "date_end": d_end},
-            "chart_required": True,
-            "chart_type": "kpi"
+            "intent": "clarification",
+            "datasets": [],
+            "filters": {},
+            "chart_required": False,
+            "chart_type": None,
+            "unsupported_reason": None
         }
